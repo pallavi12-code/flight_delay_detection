@@ -1,101 +1,89 @@
-# ✈️ Flight Delay Prediction (LSTM + Static Features)
+# ✈️ Flight Delay Prediction
 
-A deep learning model that predicts whether a flight will be delayed by
-more than 15 minutes, combining a **sequence model (LSTM)** over recent
-flight/weather records with a **dense branch** over categorical flight
-metadata (carrier, origin, destination).
+A deep-learning system for predicting whether a flight will be delayed by more than 15 minutes using sequential flight/weather features and categorical flight metadata.
 
 ## Overview
 
-- **Task:** Binary classification — `DELAYED` vs `ON TIME` (delay > 15 min)
-- **Data:** [Historical Flight and Weather Data](https://www.kaggle.com/datasets/ioanagheorghiu/historical-flight-and-weather-data) (Kaggle)
-- **Architecture:** Dual-input Keras model — a 2-layer LSTM over sequential
-  numeric/weather features, concatenated with a dense branch over
-  label-encoded categorical features
-- **Class imbalance handling:** Focal loss + computed class weights (delays
-  are the minority class)
-- **Threshold selection:** Chosen from the validation ROC curve (Youden's J
-  statistic) rather than a fixed 0.5 cutoff
-- **Result:** ~71% prediction accuracy on held-out data
+**Task:** Binary classification — delayed vs. on time  
+**Model:** Dual-input Keras architecture with LSTM sequence modeling and a dense metadata branch  
+**Dataset:** Historical Flight and Weather Data (Kaggle)  
+**Reported held-out accuracy:** ~71%
+
+## Architecture
+
+```text
+Recent Flight / Weather Records
+              ↓
+        2-Layer LSTM
+              │
+              ├──────────────┐
+              │              ↓
+Flight Metadata → Dense Branch
+              │              │
+              └──────┬───────┘
+                     ↓
+              Feature Fusion
+                     ↓
+              Delay Probability
+```
+
+## Modeling choices
+
+- **Focal loss** to focus learning on harder minority-class delay examples
+- **Class weights** to address imbalance
+- **Validation-based threshold selection** using Youden's J statistic rather than assuming a 0.5 cutoff
+- Persisted encoders and scaler so inference uses the same transformations as training
+- Safe handling of unseen categorical values during inference
 
 ## Project structure
 
-```
-flight-delay-prediction/
-├── README.md
+```text
+flight_delay_detection/
 ├── requirements.txt
 ├── .gitignore
-├── data/                    # raw CSVs go here (gitignored — see Setup)
-├── models/                  # saved model, encoders, scaler (gitignored)
-├── outputs/                 # generated plots (gitignored)
 ├── notebooks/
-│   └── flight_delay_eda_original.py   # original exploratory Colab script
+│   └── flight_delay_eda_original.py
 └── src/
-    ├── config.py             # paths, feature lists, hyperparameters
-    ├── data_preprocessing.py # loading, cleaning, encoding, sequence building
-    ├── model.py               # model architecture + focal loss
-    ├── train.py                # end-to-end training pipeline
-    ├── visualize.py            # confusion matrix / training curve plots
-    └── predict.py               # CLI inference on a single flight
+    ├── config.py
+    ├── data_preprocessing.py
+    ├── model.py
+    ├── train.py
+    ├── visualize.py
+    └── predict.py
 ```
 
-## Setup
+## Run locally
 
 ```bash
-git clone https://github.com/<your-username>/flight-delay-prediction.git
-cd flight-delay-prediction
+git clone https://github.com/pallavi12-code/flight_delay_detection.git
+cd flight_delay_detection
 pip install -r requirements.txt
 ```
 
-### Get the data
+Download the dataset from Kaggle and place the extracted data in the expected `data/` location.
 
-1. Download `kaggle.json` from your Kaggle account (Account → API → Create New Token).
-2. ```bash
-   mkdir -p ~/.kaggle
-   mv kaggle.json ~/.kaggle/
-   chmod 600 ~/.kaggle/kaggle.json
-   kaggle datasets download -d ioanagheorghiu/historical-flight-and-weather-data
-   unzip historical-flight-and-weather-data.zip -d data/flight_weather_data
-   ```
+Train:
 
-## Usage
-
-**Train the model:**
 ```bash
 python -m src.train
 ```
-This cleans the data, builds LSTM sequences, trains with early stopping,
-picks an optimal decision threshold on the validation set, and saves the
-model, label encoders, scaler, and threshold to `models/`. Plots are saved
-to `outputs/`.
 
-**Run inference on a single flight:**
+Run inference:
+
 ```bash
 python -m src.predict
 ```
-Prompts for flight/weather details and returns a delay probability using
-the exact encoders/scaler fit during training (no placeholder values).
 
-## Notes on modeling choices
+## Tech stack
 
-- **Focal loss over plain binary cross-entropy** — with delays as the
-  minority class, focal loss keeps the model focused on the harder,
-  under-represented examples instead of being dominated by easy negatives.
-- **Threshold tuning** — the default 0.5 cutoff isn't necessarily optimal
-  under class imbalance, so the operating threshold is chosen from the
-  validation ROC curve and reused consistently at inference time.
-- **Saved encoders/scaler** — persisting the exact `LabelEncoder`/
-  `StandardScaler` objects fit during training (rather than re-fitting or
-  using placeholder values at inference) keeps train/serve transforms
-  consistent, and unseen categories at inference time fall back to a safe
-  default instead of raising an error.
+**Python · TensorFlow/Keras · LSTM · Scikit-learn · Pandas · NumPy**
 
-## Possible next steps
+## Future improvements
 
-- Compare against a non-sequential baseline (e.g. gradient-boosted trees)
-  to quantify what the LSTM sequence structure actually adds
-- Track experiments (e.g. MLflow/Weights & Biases) instead of print statements
-- Add unit tests for `data_preprocessing.py` and a small sample dataset for CI
+- Benchmark the LSTM against tree-based and simpler non-sequential baselines
+- Add automated unit tests and a small CI dataset
+- Track experiments with MLflow or Weights & Biases
+- Report precision, recall, ROC-AUC and calibration alongside accuracy
 
 ## License
 
