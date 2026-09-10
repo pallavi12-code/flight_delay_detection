@@ -7,7 +7,10 @@ import tensorflow as tf
 from tensorflow.keras import Input, Model, layers
 from tensorflow.keras import backend as K
 
-from . import config
+try:
+    from . import config
+except ImportError:  # pragma: no cover - supports direct script execution
+    import config
 
 
 def focal_loss(gamma: float = config.FOCAL_LOSS_GAMMA, alpha: float = config.FOCAL_LOSS_ALPHA):
