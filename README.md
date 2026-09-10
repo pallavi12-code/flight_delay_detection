@@ -1,89 +1,113 @@
-# ✈️ Flight Delay Prediction
+# Flight Delay Prediction
 
-A deep-learning system for predicting whether a flight will be delayed by more than 15 minutes using sequential flight/weather features and categorical flight metadata.
+This repository contains an LSTM-based binary classifier for whether a flight's
+arrival delay exceeds 15 minutes. It is an experiment, not a production-ready
+forecasting service, and this repository does not contain the source dataset or
+trained artifacts.
 
-## Overview
-
-**Task:** Binary classification — delayed vs. on time  
-**Model:** Dual-input Keras architecture with LSTM sequence modeling and a dense metadata branch  
-**Dataset:** Historical Flight and Weather Data (Kaggle)  
-**Reported held-out accuracy:** ~71%
-
-## Architecture
+## Architecture and data flow
 
 ```text
-Recent Flight / Weather Records
-              ↓
-        2-Layer LSTM
-              │
-              ├──────────────┐
-              │              ↓
-Flight Metadata → Dense Branch
-              │              │
-              └──────┬───────┘
-                     ↓
-              Feature Fusion
-                     ↓
-              Delay Probability
+CSV files
+  -> cleaning and target creation
+  -> chronological 60/20/20 split
+  -> fit encoders/scaler on training rows only
+  -> preceding-row windows (T=5)
+  -> LSTM sequence branch + categorical metadata branch
+  -> focal-loss training
+  -> validation threshold selection
+  -> held-out test metrics and saved artifacts
 ```
 
-## Modeling choices
+The model keeps the original two-branch architecture: two LSTM layers process
+the numeric history, a dense branch processes encoded carrier/origin/
+destination values, and the branches are fused for a sigmoid probability.
+The implementation does not add embeddings or change the layer sizes.
 
-- **Focal loss** to focus learning on harder minority-class delay examples
-- **Class weights** to address imbalance
-- **Validation-based threshold selection** using Youden's J statistic rather than assuming a 0.5 cutoff
-- Persisted encoders and scaler so inference uses the same transformations as training
-- Safe handling of unseen categorical values during inference
+## Dataset
 
-## Project structure
+Download the Historical Flight and Weather Data dataset separately and place
+its monthly CSV files in `data/flight_weather_data/`, or pass another directory
+with `--data-dir`. CSV files are loaded in sorted filename order. Required
+columns are the features listed in `config.py` plus `arrival_delay`.
 
-```text
-flight_delay_detection/
-├── requirements.txt
-├── .gitignore
-├── notebooks/
-│   └── flight_delay_eda_original.py
-└── src/
-    ├── config.py
-    ├── data_preprocessing.py
-    ├── model.py
-    ├── train.py
-    ├── visualize.py
-    └── predict.py
-```
-
-## Run locally
+## Installation and commands
 
 ```bash
-git clone https://github.com/pallavi12-code/flight_delay_detection.git
-cd flight_delay_detection
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Download the dataset from Kaggle and place the extracted data in the expected `data/` location.
-
-Train:
+Train with configurable paths and hyperparameters:
 
 ```bash
-python -m src.train
+python train.py --data-dir data/flight_weather_data \
+  --model-dir models --output-dir outputs \
+  --seed 42 --epochs 30 --batch-size 256
 ```
 
-Run inference:
+The training command writes the Keras model, label encoders, scaler, selected
+threshold, metadata, metrics, and plots to the configured directories.
+
+Run interactive prediction from those artifacts:
 
 ```bash
-python -m src.predict
+python predict.py --model-dir models
 ```
 
-## Tech stack
+The same persisted preprocessing artifacts are used during prediction.
+Unseen categorical values are mapped to a known fallback category; missing
+inputs and missing artifacts raise explicit errors.
 
-**Python · TensorFlow/Keras · LSTM · Scikit-learn · Pandas · NumPy**
+## Testing and CI
 
-## Future improvements
+The preprocessing and utility tests do not require the full dataset or a
+trained TensorFlow model:
 
-- Benchmark the LSTM against tree-based and simpler non-sequential baselines
-- Add automated unit tests and a small CI dataset
-- Track experiments with MLflow or Weights & Biases
-- Report precision, recall, ROC-AUC and calibration alongside accuracy
+```bash
+pytest -q
+```
+
+GitHub Actions runs these tests on pushes and pull requests. TensorFlow is
+intentionally not installed by the lightweight CI job because the tests do not
+import or execute the model.
+
+## Leakage audit and limitations
+
+- The scaler and categorical encoders are fit only on the chronological
+  training partition. Validation and test rows are transformed with those
+  artifacts.
+- Evaluation is performed on the final chronological partition, not on rows
+  used for fitting. The validation partition is used to choose the operating
+  threshold.
+- The source data is loaded in filename order; this is only a valid temporal
+  ordering if the dataset filenames encode chronology. A real deployment should
+  split using a verified flight timestamp and should group related flights as
+  appropriate.
+- `departure_delay` and the component delay fields may only be known after
+  operations have begun. If the intended use is pre-departure prediction,
+  these fields are target leakage for that use case and must be removed.
+- Numeric missing values are imputed with medians fit on the training
+  partition, and those medians are persisted with the preprocessing artifacts.
+- Single-flight prediction repeats the current numeric row five times because
+  no history is supplied. This is a documented approximation, not equivalent
+  to a true rolling-flight inference path.
+- No performance metrics are claimed in this README. Results depend on the
+  downloaded dataset, split ordering, hardware, and runtime versions.
+
+## Repository layout
+
+```text
+config.py              Runtime defaults and artifact paths
+data_preprocessing.py  Loading, cleaning, fitted transforms, sequences
+model.py               Original LSTM + metadata model
+train.py               Chronological training entry point
+evaluation.py          Held-out evaluation utility
+predict.py             Artifact-backed interactive prediction
+visualize.py           Headless plots
+tests/                 Dataset-free preprocessing tests
+```
 
 ## License
 

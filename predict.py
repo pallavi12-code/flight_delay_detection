@@ -7,39 +7,55 @@ than the placeholder zero-encoding used in early experiments).
 Usage:
     python -m src.predict
 """
-import joblib
+import argparse
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 
-from . import config
-from .data_preprocessing import encode_with_fallback
-from .model import focal_loss
+try:
+    from . import config
+    from .data_preprocessing import Preprocessor
+    from .model import focal_loss
+except ImportError:  # pragma: no cover
+    import config
+    from data_preprocessing import Preprocessor
+    from model import focal_loss
 
 
-def load_artifacts():
+def load_artifacts(model_dir: Path = config.DEFAULT_MODEL_DIR):
+    model_dir = Path(model_dir)
+    required = [
+        model_dir / "flight_delay_model.keras",
+        model_dir / "best_threshold.joblib",
+    ]
+    missing = [str(path) for path in required if not path.exists()]
+    if missing:
+        raise FileNotFoundError(f"Missing model artifacts: {missing}")
     model = tf.keras.models.load_model(
-        config.MODEL_PATH, custom_objects={"focal_loss_fixed": focal_loss()}
+        model_dir / "flight_delay_model.keras",
+        custom_objects={"focal_loss_fixed": focal_loss()},
     )
-    encoders = joblib.load(config.ENCODERS_PATH)
-    scaler = joblib.load(config.SCALER_PATH)
-    threshold = joblib.load(config.THRESHOLD_PATH)
-    return model, encoders, scaler, threshold
+    preprocessor = Preprocessor.load(model_dir)
+    import joblib
+    threshold = float(joblib.load(model_dir / "best_threshold.joblib"))
+    return model, preprocessor, threshold
 
 
-def predict_single(inputs: dict, model, encoders, scaler, threshold, T: int = config.SEQUENCE_LENGTH):
+def predict_single(inputs: dict, model, preprocessor, threshold,
+                   T: int = config.SEQUENCE_LENGTH):
     """
     inputs: dict with all keys in config.NUM_COLS plus config.CAT_COLS
     (raw, unscaled/unencoded values).
     """
-    num_row = pd.DataFrame([{c: inputs[c] for c in config.NUM_COLS}])
-    num_row[config.NUM_COLS] = scaler.transform(num_row[config.NUM_COLS])
-    num_features = num_row.values  # shape (1, n_features)
-
-    cat_row = pd.DataFrame([{c: str(inputs[c]) for c in config.CAT_COLS}])
-    for c in config.CAT_COLS:
-        cat_row[c] = encode_with_fallback(encoders[c], cat_row[c])
-    cat_features = cat_row.values  # shape (1, n_static)
+    missing = sorted(set(config.NUM_COLS + config.CAT_COLS) - set(inputs))
+    if missing:
+        raise ValueError(f"Missing prediction inputs: {missing}")
+    num_row = pd.DataFrame([{c: inputs[c] for c in config.NUM_COLS + config.CAT_COLS}])
+    transformed = preprocessor.transform(num_row)
+    num_features = transformed[config.NUM_COLS].to_numpy()
+    cat_features = transformed[config.CAT_COLS].to_numpy()
 
     # No true history available for a single ad-hoc query, so repeat the
     # current reading T times to satisfy the LSTM's fixed sequence length.
@@ -79,9 +95,12 @@ def _prompt_for_inputs() -> dict:
 
 
 if __name__ == "__main__":
-    model, encoders, scaler, threshold = load_artifacts()
+    parser = argparse.ArgumentParser(description="Predict one flight delay probability.")
+    parser.add_argument("--model-dir", type=Path, default=config.DEFAULT_MODEL_DIR)
+    args = parser.parse_args()
+    model, preprocessor, threshold = load_artifacts(args.model_dir)
     user_inputs = _prompt_for_inputs()
-    probability, prediction = predict_single(user_inputs, model, encoders, scaler, threshold)
+    probability, prediction = predict_single(user_inputs, model, preprocessor, threshold)
     print("\n🧾 Prediction result:")
     print(f"Delay probability: {probability:.3f}")
     print(f"Predicted status : {prediction}")
